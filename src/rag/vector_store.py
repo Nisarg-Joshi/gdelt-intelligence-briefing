@@ -39,10 +39,13 @@ def get_embeddings() -> HuggingFaceEmbeddings:
 def build_vector_store(
     documents: list[dict],
     persist_dir: str = DEFAULT_PERSIST_DIR,
+    max_documents: int = 800,
+    batch_size: int = 100,
 ) -> Chroma:
     """
-    Embed all documents and persist them to ChromaDB.
-    Wipes any existing store at persist_dir before building.
+    Embed documents and persist them to ChromaDB, in small batches to
+    avoid memory spikes on resource-limited environments (e.g. free-tier
+    cloud hosting). Wipes any existing store at persist_dir before building.
 
     Parameters
     ----------
@@ -51,6 +54,12 @@ def build_vector_store(
         Produced by gdelt_loader.events_to_documents().
     persist_dir : str
         Where ChromaDB persists its files.
+    max_documents : int
+        Hard cap on number of documents embedded, to keep memory usage
+        bounded on small hosting tiers. Most severe events are kept
+        (documents list is assumed pre-sorted or will be truncated as-is).
+    batch_size : int
+        Number of documents embedded per batch — keeps peak memory low.
 
     Returns
     -------
@@ -58,6 +67,13 @@ def build_vector_store(
     """
     if not documents:
         raise ValueError("No documents provided to build_vector_store.")
+
+    if len(documents) > max_documents:
+        logger.warning(
+            f"Capping documents from {len(documents):,} to {max_documents:,} "
+            f"to keep memory usage bounded on this environment."
+        )
+        documents = documents[:max_documents]
 
     # Wipe stale store so we don't mix old and new data
     if os.path.exists(persist_dir):
@@ -71,12 +87,21 @@ def build_vector_store(
         for d in documents
     ]
 
-    logger.info(f"Embedding {len(langchain_docs):,} documents into ChromaDB...")
-    vectorstore = Chroma.from_documents(
-        documents=langchain_docs,
-        embedding=embeddings,
-        persist_directory=persist_dir,
-    )
+    logger.info(f"Embedding {len(langchain_docs):,} documents into ChromaDB in batches of {batch_size}...")
+
+    vectorstore = None
+    for i in range(0, len(langchain_docs), batch_size):
+        batch = langchain_docs[i:i + batch_size]
+        if vectorstore is None:
+            vectorstore = Chroma.from_documents(
+                documents=batch,
+                embedding=embeddings,
+                persist_directory=persist_dir,
+            )
+        else:
+            vectorstore.add_documents(batch)
+        logger.info(f"  -> embedded {min(i + batch_size, len(langchain_docs)):,} / {len(langchain_docs):,}")
+
     logger.info("Vector store built successfully.")
     return vectorstore
 
