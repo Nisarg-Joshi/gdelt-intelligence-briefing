@@ -2,38 +2,51 @@
 Vector Store Module
 -------------------
 Handles embedding of GDELT event documents and storage/retrieval
-via ChromaDB with sentence-transformers (all-MiniLM-L6-v2).
-
-Designed for CPU-only environments — no GPU required.
-First run will download the ~90MB MiniLM model; subsequent runs use cache.
+via ChromaDB using its built-in lightweight ONNX-based MiniLM
+embedding function — avoids torch/transformers entirely, keeping
+memory usage low enough for free-tier cloud hosting.
 """
 
 import logging
 import os
 import shutil
 
+import chromadb
+from chromadb.utils import embedding_functions
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_core.embeddings import Embeddings
 
 logger = logging.getLogger(__name__)
 
-EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 DEFAULT_PERSIST_DIR = "./chroma_db"
 
 
-def get_embeddings() -> HuggingFaceEmbeddings:
+class ChromaDefaultEmbeddings(Embeddings):
     """
-    Load the MiniLM embedding model.
-    CPU-optimised, normalised embeddings for cosine similarity.
-    ~90MB download on first use, cached locally after that.
+    Thin LangChain-compatible wrapper around ChromaDB's built-in
+    ONNX-based MiniLM embedding function. Much lighter on memory
+    than the full sentence-transformers + torch stack.
     """
-    logger.info(f"Loading embedding model: {EMBEDDING_MODEL}")
-    return HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL,
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
-    )
+
+    def __init__(self):
+        self._fn = embedding_functions.DefaultEmbeddingFunction()
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return self._fn(texts)
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._fn([text])[0]
+
+
+def get_embeddings() -> ChromaDefaultEmbeddings:
+    """
+    Load the lightweight ONNX-based MiniLM embedding function.
+    No torch/transformers dependency — low memory footprint,
+    suitable for resource-constrained environments.
+    """
+    logger.info("Loading lightweight ONNX embedding function (ChromaDB default)...")
+    return ChromaDefaultEmbeddings()
 
 
 def build_vector_store(
@@ -51,13 +64,11 @@ def build_vector_store(
     ----------
     documents : list[dict]
         Each dict must have 'text' (str) and 'metadata' (dict) keys.
-        Produced by gdelt_loader.events_to_documents().
     persist_dir : str
         Where ChromaDB persists its files.
     max_documents : int
         Hard cap on number of documents embedded, to keep memory usage
-        bounded on small hosting tiers. Most severe events are kept
-        (documents list is assumed pre-sorted or will be truncated as-is).
+        bounded on small hosting tiers.
     batch_size : int
         Number of documents embedded per batch — keeps peak memory low.
 
@@ -109,7 +120,6 @@ def build_vector_store(
 def load_vector_store(persist_dir: str = DEFAULT_PERSIST_DIR) -> Chroma:
     """
     Load an existing ChromaDB vector store from disk.
-    Use this when re-opening the app without re-ingesting data.
     """
     if not os.path.exists(persist_dir):
         raise FileNotFoundError(
