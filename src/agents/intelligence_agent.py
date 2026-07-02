@@ -119,7 +119,7 @@ def _make_tools(vectorstore: Chroma, df: pd.DataFrame):
     """
 
     @tool
-    def get_top_severe_events(n: int = 15) -> str:
+    def get_top_severe_events(n: int = 5) -> str:
         """
         Retrieve the most severe conflict events by hostility score.
         Always call this FIRST — it gives you the most dramatic and
@@ -161,14 +161,16 @@ def _make_tools(vectorstore: Chroma, df: pd.DataFrame):
           - 'military clashes and fighting'
           - 'diplomatic breakdown and rejection'
           - 'military posture and threats'
-        Returns the top 10 most relevant event descriptions.
+        Returns the top 3 most relevant event descriptions.
         """
-        results = vectorstore.similarity_search(query, k=10)
+        results = vectorstore.similarity_search(query, k=3)
         if not results:
             return "No relevant conflict events found for this query."
-        return "\n\n".join(
-            [f"[Event {i + 1}]\n{doc.page_content}" for i, doc in enumerate(results)]
-        )
+        formatted = []
+        for i, doc in enumerate(results):
+            content = doc.page_content[:400] + "..." if len(doc.page_content) > 400 else doc.page_content
+            formatted.append(f"[Event {i + 1}]\n{content}")
+        return "\n\n".join(formatted)
 
     @tool
     def get_escalation_metrics(country_code: str) -> str:
@@ -281,7 +283,7 @@ def create_intelligence_agent(
     )
 
     tools = _make_tools(vectorstore, df)
-    agent = create_react_agent(llm, tools, prompt=SYSTEM_PROMPT)
+    agent = create_react_agent(llm, tools, state_modifier=SYSTEM_PROMPT)
     logger.info("Intelligence agent ready.")
     return agent
 
