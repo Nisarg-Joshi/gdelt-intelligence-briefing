@@ -19,7 +19,7 @@ from langchain_core.embeddings import Embeddings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PERSIST_DIR = "./chroma_db"
+DEFAULT_PERSIST_DIR = "/tmp/chroma_db"
 
 
 class ChromaDefaultEmbeddings(Embeddings):
