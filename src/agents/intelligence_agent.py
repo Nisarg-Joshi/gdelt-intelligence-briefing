@@ -283,7 +283,7 @@ def create_intelligence_agent(
     )
 
     tools = _make_tools(vectorstore, df)
-    agent = create_react_agent(llm, tools, state_modifier=SYSTEM_PROMPT)
+    agent = create_react_agent(llm, tools)
     logger.info("Intelligence agent ready.")
     return agent
 
@@ -291,6 +291,9 @@ def create_intelligence_agent(
 # ---------------------------------------------------------------------------
 # Convenience wrapper
 # ---------------------------------------------------------------------------
+from langchain_core.messages import HumanMessage, SystemMessage
+
+
 def generate_brief(
     agent,
     focus: str,
@@ -298,31 +301,26 @@ def generate_brief(
 ) -> str:
     """
     Run the agent and return the intelligence brief as a string.
-
-    Parameters
-    ----------
-    agent      — the LangGraph agent returned by create_intelligence_agent
-    focus      : str — e.g. "Russia-Ukraine conflict" or "Middle East"
-    date_range : str — e.g. "June 1-7, 2025"
-
-    Returns
-    -------
-    str — the formatted intelligence brief
+    Injects the system prompt directly into the messages list for
+    compatibility across all LangGraph versions.
     """
     query = (
         f"Generate a comprehensive intelligence brief for the following:\n\n"
         f"Focus area: {focus}\n"
         f"Date range covered by the data: {date_range}\n\n"
         f"INSTRUCTIONS:\n"
-        f"1. First search for specific military and fighting events related to {focus}\n"
-        f"2. Then search for diplomatic and political events related to {focus}\n"
-        f"3. Then get escalation metrics for the relevant country code\n"
-        f"4. Write the brief using SPECIFIC named locations, actors, and events \n"
-        f"   from your search results — not generic summaries.\n"
-        f"5. Every claim must reference a specific event from the data.\n"
+        f"1. First call get_top_severe_events to see the most hostile events\n"
+        f"2. Then call search_conflict_events for military/fighting events\n"
+        f"3. Then call search_conflict_events for diplomatic/political events\n"
+        f"4. Then call get_escalation_metrics for the relevant country code\n"
+        f"5. Write the brief using SPECIFIC named locations, actors, and events\n"
         f"6. Translate all technical scores into plain English meaning."
     )
     logger.info(f"Running intelligence agent for: {focus} | {date_range}")
-    result = agent.invoke({"messages": [("human", query)]})
-    # LangGraph returns messages list — last message is the final answer
+    result = agent.invoke({
+        "messages": [
+            SystemMessage(content=SYSTEM_PROMPT),
+            HumanMessage(content=query),
+        ]
+    })
     return result["messages"][-1].content
