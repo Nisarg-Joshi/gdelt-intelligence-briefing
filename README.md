@@ -2,7 +2,7 @@
 
 An agentic RAG pipeline that ingests real-world conflict event data from the [GDELT Project](https://www.gdeltproject.org/) and generates structured, plain-language intelligence briefs using a LangGraph tool-calling agent powered by Groq's LLaMA 3.3 70B.
 
-**Live demo:** *(add Streamlit Cloud link here once deployed)*
+**Live demo:** [Launch Live Demo](https://gdelt-intelligence-briefing-hrydr8rrgmqynk2waeedzr.streamlit.app/)
 
 ---
 
