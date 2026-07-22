@@ -6,9 +6,12 @@ and converts rows into natural language text documents for embedding.
 
 GDELT 1.0 note:
 Files are named by the date they were processed. The SQLDATE field inside
-each file reflects the actual date the event occurred, which is typically
-around one year prior to the filename date. All dates displayed in the
-dashboard are taken directly from SQLDATE — they are always accurate.
+each file reflects the actual date the event occurred, which can vary
+significantly from the filename date (from the same day up to many years
+earlier), since GDELT extracts dates referenced in article text, not just
+publish dates. To keep results relevant to the range the user selected,
+this loader filters the final dataset down to events whose SQLDATE falls
+within the selected start/end dates.
 
 QuadClass 3 = Verbal Conflict, 4 = Material Conflict
 GoldsteinScale: -10 (most hostile) to +10 (most cooperative)
@@ -79,8 +82,9 @@ def _describe_event(event_code: str) -> str:
 def download_gdelt_day(date: datetime) -> pd.DataFrame:
     """
     Download and parse a single day of GDELT 1.0 data.
-    The filename date is the processing date. SQLDATE inside reflects
-    actual event dates, typically ~1 year prior to filename.
+    Note: the filename date is the processing date. SQLDATE inside the
+    file reflects the actual event date, which can differ from the
+    filename date by anywhere from 0 days to several years.
     """
     date_str = date.strftime("%Y%m%d")
     url = f"{GDELT_BASE_URL}{date_str}.export.CSV.zip"
@@ -119,16 +123,22 @@ def load_conflict_events(
     end_date: str,
     country_code: str | None = None,
     goldstein_threshold: float = -2.0,
+    enforce_date_range: bool = True,
 ) -> pd.DataFrame:
     """
     Load and filter conflict events across a date range.
 
     Parameters
     ----------
-    start_date : str  - "YYYY-MM-DD" (GDELT file date, not event date)
+    start_date : str  - "YYYY-MM-DD" (the range the user selected)
     end_date   : str  - "YYYY-MM-DD"
     country_code : str | None
     goldstein_threshold : float
+    enforce_date_range : bool
+        If True (default), only events whose actual SQLDATE falls within
+        [start_date, end_date] are kept. This guarantees the dashboard
+        only shows events "on that day" rather than whatever historical
+        events happened to be referenced in that day's GDELT file.
     """
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
@@ -174,6 +184,23 @@ def load_conflict_events(
             | (conflict["Actor2CountryCode"] == code)
             | (conflict["ActionGeo_CountryCode"] == code)
         ]
+
+    # Filter: enforce that events actually fall within the requested window.
+    # Without this, GDELT's file-date vs. event-date drift (which can span
+    # years, not just ~1 year as previously assumed) means the dashboard can
+    # show events wildly outside the range the user selected.
+    if enforce_date_range:
+        pre_filter_count = len(conflict)
+        conflict = conflict[
+            (conflict["SQLDATE"] >= pd.Timestamp(start))
+            & (conflict["SQLDATE"] <= pd.Timestamp(end))
+        ]
+        dropped = pre_filter_count - len(conflict)
+        if dropped > 0:
+            logger.info(
+                f"Dropped {dropped:,} events outside the selected date range "
+                f"({start_date} to {end_date})."
+            )
 
     # Select key columns
     key_cols = [
