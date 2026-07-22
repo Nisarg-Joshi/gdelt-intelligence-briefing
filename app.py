@@ -27,6 +27,11 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------------------------
+# Config
+# ---------------------------------------------------------------------------
+MAX_DATE_RANGE_DAYS = 14  # Hard cap to avoid OOM / health-check timeouts on free-tier hosting
+
+# ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
 with st.sidebar:
@@ -41,6 +46,14 @@ with st.sidebar:
         start_date = st.date_input("Start date", value=pd.Timestamp("2025-06-01"))
     with col2:
         end_date = st.date_input("End date", value=pd.Timestamp("2025-06-07"))
+
+    selected_days = (end_date - start_date).days
+    if selected_days > MAX_DATE_RANGE_DAYS:
+        st.warning(
+            f"⚠️ Selected range is {selected_days} days. This demo is capped at "
+            f"{MAX_DATE_RANGE_DAYS} days to stay within free-tier memory limits. "
+            f"The range will be blocked when you click 'Ingest Data & Generate Brief'."
+        )
 
     st.info(
         "📅 **Date note:** GDELT 1.0 files are named by processing date. "
@@ -88,7 +101,7 @@ with st.sidebar:
     )
 
     st.divider()
-    st.caption("⚠️ GDELT downloads may take 30-90s per day of data. Start with a 3-5 day range.")
+    st.caption(f"⚠️ GDELT downloads may take 30-90s per day of data. Max range: {MAX_DATE_RANGE_DAYS} days.")
     if st.button("🗑️ Clear stored vector DB", use_container_width=True):
         if os.path.exists("./chroma_db"):
             shutil.rmtree("./chroma_db")
@@ -112,6 +125,16 @@ if "actual_date_range" not in st.session_state:
 if run_button:
     if start_date > end_date:
         st.error("Start date must be before end date.")
+        st.stop()
+
+    if (end_date - start_date).days > MAX_DATE_RANGE_DAYS:
+        st.error(
+            f"🚫 Date range of {(end_date - start_date).days} days exceeds the "
+            f"{MAX_DATE_RANGE_DAYS}-day limit for this demo. This limit exists because "
+            f"downloading and embedding more than ~{MAX_DATE_RANGE_DAYS} days of GDELT data "
+            f"exceeds the memory available on free-tier hosting and crashes the app. "
+            f"Please select a shorter range."
+        )
         st.stop()
 
     start_str = start_date.strftime("%Y-%m-%d")
@@ -288,7 +311,7 @@ if st.session_state.df is not None:
 
 else:
     st.title("🌐 GDELT Geopolitical Intelligence Briefing System")
-    st.markdown("""
+    st.markdown(f"""
 This system ingests real conflict event data from the **GDELT Project** and uses a
 **LangChain agent** powered by **Groq's LLaMA 3.3 70B** to generate structured intelligence briefs.
 
@@ -300,6 +323,9 @@ This system ingests real conflict event data from the **GDELT Project** and uses
 5. The agent generates a structured intelligence brief
 
 **Tech stack:** GDELT · Python · LangChain · LangGraph · ChromaDB · Groq · Streamlit
+
+**Note:** This demo is capped at a {MAX_DATE_RANGE_DAYS}-day date range to stay within
+the memory limits of free-tier hosting.
 
 ---
 👈 Configure the analysis in the sidebar and click **Ingest Data & Generate Brief** to begin.
