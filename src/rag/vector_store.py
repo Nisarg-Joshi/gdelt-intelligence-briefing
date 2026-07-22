@@ -5,11 +5,21 @@ Handles embedding of GDELT event documents and storage/retrieval
 via ChromaDB using its built-in lightweight ONNX-based MiniLM
 embedding function — avoids torch/transformers entirely, keeping
 memory usage low enough for free-tier cloud hosting.
+
+Each build_vector_store() call uses a fresh, uniquely-named directory
+rather than wiping and reusing a fixed path. Reusing a fixed path while
+a previous Chroma client from an earlier run is still alive in memory
+(common in Streamlit, where objects can outlive a rerun) causes SQLite
+to see its underlying file deleted out from under an open connection,
+which surfaces as "attempt to write a readonly database". Using a new
+directory per build avoids that race entirely; old directories are
+cleaned up on a best-effort basis.
 """
 
 import logging
 import os
 import shutil
+import uuid
 
 import chromadb
 from chromadb.utils import embedding_functions
@@ -19,7 +29,9 @@ from langchain_core.embeddings import Embeddings
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PERSIST_DIR = "/tmp/chroma_db"
+# Parent directory under which each build gets its own unique subfolder.
+PERSIST_ROOT = "/tmp/chroma_db"
+DEFAULT_PERSIST_DIR = PERSIST_ROOT  # kept for backwards compatibility
 
 
 class ChromaDefaultEmbeddings(Embeddings):
@@ -49,23 +61,50 @@ def get_embeddings() -> ChromaDefaultEmbeddings:
     return ChromaDefaultEmbeddings()
 
 
+def _new_persist_dir() -> str:
+    """Create and return a fresh, uniquely-named persistence directory."""
+    os.makedirs(PERSIST_ROOT, exist_ok=True)
+    path = os.path.join(PERSIST_ROOT, f"run_{uuid.uuid4().hex[:12]}")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _cleanup_old_runs(keep_dir: str) -> None:
+    """
+    Best-effort cleanup of previous run directories under PERSIST_ROOT,
+    so /tmp doesn't grow unbounded across many reruns in one session.
+    Failures are ignored — a stale directory left behind is harmless,
+    whereas failing to build the new store is not.
+    """
+    if not os.path.exists(PERSIST_ROOT):
+        return
+    for entry in os.listdir(PERSIST_ROOT):
+        full_path = os.path.join(PERSIST_ROOT, entry)
+        if full_path == keep_dir:
+            continue
+        shutil.rmtree(full_path, ignore_errors=True)
+
+
 def build_vector_store(
     documents: list[dict],
-    persist_dir: str = DEFAULT_PERSIST_DIR,
+    persist_dir: str | None = None,
     max_documents: int = 800,
     batch_size: int = 100,
 ) -> Chroma:
     """
-    Embed documents and persist them to ChromaDB, in small batches to
-    avoid memory spikes on resource-limited environments (e.g. free-tier
-    cloud hosting). Wipes any existing store at persist_dir before building.
+    Embed documents and persist them to a fresh ChromaDB directory, in
+    small batches to avoid memory spikes on resource-limited environments
+    (e.g. free-tier cloud hosting).
 
     Parameters
     ----------
     documents : list[dict]
         Each dict must have 'text' (str) and 'metadata' (dict) keys.
-    persist_dir : str
-        Where ChromaDB persists its files.
+    persist_dir : str | None
+        Where ChromaDB persists its files. If None (default), a fresh
+        unique directory is created automatically — this is the
+        recommended usage, since it avoids the "readonly database" error
+        that can occur when reusing a fixed path across reruns.
     max_documents : int
         Hard cap on number of documents embedded, to keep memory usage
         bounded on small hosting tiers.
@@ -86,10 +125,13 @@ def build_vector_store(
         )
         documents = documents[:max_documents]
 
-    # Wipe stale store so we don't mix old and new data
-    if os.path.exists(persist_dir):
-        logger.info(f"Clearing existing ChromaDB at {persist_dir}")
-        shutil.rmtree(persist_dir)
+    if persist_dir is None:
+        persist_dir = _new_persist_dir()
+        logger.info(f"Using fresh vector store directory: {persist_dir}")
+        # Clean up prior runs now that we're safely building into a new dir.
+        _cleanup_old_runs(keep_dir=persist_dir)
+    else:
+        os.makedirs(persist_dir, exist_ok=True)
 
     embeddings = get_embeddings()
 
@@ -117,7 +159,7 @@ def build_vector_store(
     return vectorstore
 
 
-def load_vector_store(persist_dir: str = DEFAULT_PERSIST_DIR) -> Chroma:
+def load_vector_store(persist_dir: str) -> Chroma:
     """
     Load an existing ChromaDB vector store from disk.
     """
@@ -131,6 +173,6 @@ def load_vector_store(persist_dir: str = DEFAULT_PERSIST_DIR) -> Chroma:
     return Chroma(persist_directory=persist_dir, embedding_function=embeddings)
 
 
-def vector_store_exists(persist_dir: str = DEFAULT_PERSIST_DIR) -> bool:
+def vector_store_exists(persist_dir: str = PERSIST_ROOT) -> bool:
     """Check whether a persisted ChromaDB already exists."""
     return os.path.exists(persist_dir) and len(os.listdir(persist_dir)) > 0
