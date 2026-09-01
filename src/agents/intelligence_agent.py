@@ -1,7 +1,7 @@
 """
 Intelligence Agent Module
 -------------------------
-A LangGraph tool-calling agent powered by Groq (LLaMA 3.3 70B) that
+A LangGraph tool-calling agent powered by Groq (openai/gpt-oss-120b) that
 analyses geopolitical conflict events and generates structured intelligence briefs.
 
 Agent tools:
@@ -276,7 +276,7 @@ def create_intelligence_agent(
         )
 
     llm = ChatGroq(
-        model="llama-3.3-70b-versatile",
+        model="openai/gpt-oss-120b",
         temperature=0.1,
         api_key=api_key,
         max_tokens=2048,
